@@ -67,10 +67,10 @@ jobs:
 
           Remove-Item $installerPath -Force
 
-      - name: Establish Tailscale Connection
+      - name: Establish Tailscale Connection with SSH
         run: |
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
-            --hostname=gh-runner-$env:GITHUB_RUN_ID
+            --hostname=gh-runner-$env:GITHUB_RUN_ID --ssh
 
           $tsIP = $null
           $retries = 0
@@ -88,28 +88,46 @@ jobs:
 
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Verify RDP Accessibility
+      - name: Verify RDP and SSH Accessibility
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
 
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          # Test RDP
+          $rdpTest = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
 
-          if (-not $testResult.TcpTestSucceeded) {
+          if (-not $rdpTest.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
               exit 1
           }
 
-          Write-Host "TCP connectivity successful!"
+          Write-Host "RDP connectivity successful!"
+
+          # Verify SSH is enabled
+          $sshStatus = & "$env:ProgramFiles\Tailscale\tailscale.exe" status --json | ConvertFrom-Json
+          
+          if ($sshStatus.Self.HostName) {
+              Write-Host "SSH via Tailscale is enabled!"
+          } else {
+              Write-Warning "SSH status could not be verified, but should be active"
+          }
 
       - name: Maintain Connection
         run: |
-          Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "==================`n"
+          Write-Host "`n╔════════════════════════════════════════════╗"
+          Write-Host "║          CONNECTION METHODS                ║"
+          Write-Host "╠════════════════════════════════════════════╣"
+          Write-Host "║  RDP ACCESS:                               ║"
+          Write-Host "║  Address: $env:TAILSCALE_IP                ║"
+          Write-Host "║  Username: RDP                             ║"
+          Write-Host "║  Password: $($env:RDP_CREDS -replace 'User: RDP \| Password: ', '')"
+          Write-Host "║                                            ║"
+          Write-Host "║  SSH ACCESS (via Tailscale):               ║"
+          Write-Host "║  Command: tailscale ssh RDP@gh-runner-$env:GITHUB_RUN_ID"
+          Write-Host "║  Or: ssh RDP@$env:TAILSCALE_IP             ║"
+          Write-Host "║  Password: $($env:RDP_CREDS -replace 'User: RDP \| Password: ', '')"
+          Write-Host "╚════════════════════════════════════════════╝`n"
 
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Write-Host "[$(Get-Date)] RDP + SSH Active - Use Ctrl+C in workflow to terminate"
               Start-Sleep -Seconds 300
           }
